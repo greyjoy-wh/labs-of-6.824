@@ -6,21 +6,24 @@ package main
 // go run mrsequential.go wc.so pg*.txt
 //
 
-import "fmt"
-import "6.824/mr"
-import "plugin"
-import "os"
-import "log"
-import "io/ioutil"
-import "sort"
+import (
+	"fmt"
+	"io/ioutil"
+	"log"
+	"os"
+	"plugin"
+	"sort"
 
-// for sorting by key.
+	"6.824/mr"
+)
+
+// for sorting by key. KeyValue 的slice,是一个引用类型，也可以认为是指针
 type ByKey []mr.KeyValue
 
 // for sorting by key.
 func (a ByKey) Len() int           { return len(a) }
 func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key } //比较key的大小
 
 func main() {
 	if len(os.Args) < 3 {
@@ -56,7 +59,7 @@ func main() {
 	// rather than being partitioned into NxM buckets.
 	//
 
-	sort.Sort(ByKey(intermediate))
+	sort.Sort(ByKey(intermediate)) //按照key进行排序
 
 	oname := "mr-out-0"
 	ofile, _ := os.Create(oname)
@@ -86,10 +89,9 @@ func main() {
 	ofile.Close()
 }
 
-//
 // load the application Map and Reduce functions
 // from a plugin file, e.g. ../mrapps/wc.so
-//
+// 加载插件,在插件中寻找两个方法,函数返回的是两个方法，map 和 reduce
 func loadPlugin(filename string) (func(string, string) []mr.KeyValue, func(string, []string) string) {
 	p, err := plugin.Open(filename)
 	if err != nil {
@@ -99,7 +101,7 @@ func loadPlugin(filename string) (func(string, string) []mr.KeyValue, func(strin
 	if err != nil {
 		log.Fatalf("cannot find Map in %v", filename)
 	}
-	mapf := xmapf.(func(string, string) []mr.KeyValue)
+	mapf := xmapf.(func(string, string) []mr.KeyValue) //类型转换，转换成对应的方法
 	xreducef, err := p.Lookup("Reduce")
 	if err != nil {
 		log.Fatalf("cannot find Reduce in %v", filename)

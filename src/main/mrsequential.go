@@ -18,6 +18,7 @@ import (
 )
 
 // for sorting by key. KeyValue 的slice,是一个引用类型，也可以认为是指针
+// ByKey是一个interface？ 实现了sort的几个比较的方法 长度 交换 大小
 type ByKey []mr.KeyValue
 
 // for sorting by key.
@@ -37,7 +38,7 @@ func main() {
 	// read each input file,
 	// pass it to Map,
 	// accumulate the intermediate Map output.
-	//
+
 	intermediate := []mr.KeyValue{}
 	for _, filename := range os.Args[2:] {
 		file, err := os.Open(filename)
@@ -71,6 +72,7 @@ func main() {
 	i := 0
 	for i < len(intermediate) {
 		j := i + 1
+		//计算有多少个该key值
 		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
 			j++
 		}
@@ -92,6 +94,7 @@ func main() {
 // load the application Map and Reduce functions
 // from a plugin file, e.g. ../mrapps/wc.so
 // 加载插件,在插件中寻找两个方法,函数返回的是两个方法，map 和 reduce
+// 这种写代码的思路可以学习一些
 func loadPlugin(filename string) (func(string, string) []mr.KeyValue, func(string, []string) string) {
 	p, err := plugin.Open(filename)
 	if err != nil {

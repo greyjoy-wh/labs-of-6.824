@@ -17,11 +17,12 @@ import (
 	"6.824/mr"
 )
 
-// for sorting by key. KeyValue 的slice,是一个引用类型，也可以认为是指针
-// ByKey是一个interface？ 实现了sort的几个比较的方法 长度 交换 大小
+// for sorting by key. 这里 []KeyValue 的形式是一种切片slice，切片的内容是KeyValue 也就是 By是一个指针
+// ByKey是一个interface 实现了sort的几个比较的方法 长度 交换 大小
 type ByKey []mr.KeyValue
 
 // for sorting by key.
+// 满足 sort 包中 sort.Interface 的要求，以便对切片进行排序
 func (a ByKey) Len() int           { return len(a) }
 func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key } //比较key的大小
@@ -38,7 +39,7 @@ func main() {
 	// read each input file,
 	// pass it to Map,
 	// accumulate the intermediate Map output.
-
+	//遍历 输入的需要进行 map 的文件，执行map 并且保存keyvalue值
 	intermediate := []mr.KeyValue{}
 	for _, filename := range os.Args[2:] {
 		file, err := os.Open(filename)
@@ -69,6 +70,7 @@ func main() {
 	// call Reduce on each distinct key in intermediate[],
 	// and print the result to mr-out-0.
 	//
+	//执行reduce 将 相同的key值的value进行整合相加
 	i := 0
 	for i < len(intermediate) {
 		j := i + 1
@@ -94,6 +96,7 @@ func main() {
 // load the application Map and Reduce functions
 // from a plugin file, e.g. ../mrapps/wc.so
 // 加载插件,在插件中寻找两个方法,函数返回的是两个方法，map 和 reduce
+// map
 // 这种写代码的思路可以学习一些
 func loadPlugin(filename string) (func(string, string) []mr.KeyValue, func(string, []string) string) {
 	p, err := plugin.Open(filename)
@@ -105,6 +108,8 @@ func loadPlugin(filename string) (func(string, string) []mr.KeyValue, func(strin
 		log.Fatalf("cannot find Map in %v", filename)
 	}
 	mapf := xmapf.(func(string, string) []mr.KeyValue) //类型转换，转换成对应的方法
+	// 这种断言的类型转换的好处是能够返回err，
+	// 看是否有错误 当然这里只用一个返回值
 	xreducef, err := p.Lookup("Reduce")
 	if err != nil {
 		log.Fatalf("cannot find Reduce in %v", filename)

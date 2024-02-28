@@ -32,17 +32,17 @@ type TaskAskRequest struct {
 
 // 派发任务
 type TaskAskResponse struct {
-	mapNum    int    //map任务的编号
+	MapNum    int    //map任务的编号
 	Filename  string //map 任务的filename
 	TaskType  int    //0 表示 map  1 表示 reduce
 	AllDone   bool   //所有任务都完成了
-	nReduce   int
-	reduceNum int
-	wait      bool
+	NReduce   int
+	ReduceNum int
+	Wait      bool
 }
 
 type MapFinishRequest struct {
-	mapNum int
+	MapNum int
 }
 
 type MapFinishResponse struct {

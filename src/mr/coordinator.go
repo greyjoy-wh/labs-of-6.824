@@ -12,12 +12,12 @@ import (
 
 type MapTask struct {
 	FileName string //文件名
-	send     bool   //是否被发布
+	Send     bool   //是否被发布
 	Finish   bool   //是否有被完成
 }
 
 type ReduceTask struct {
-	send   bool //是否被发布
+	Send   bool //是否被发布
 	Finish bool //是否有被完成
 }
 
@@ -31,9 +31,9 @@ type Coordinator struct {
 	MapMux      sync.Mutex
 	// ReduceTask map[string]bool //待处理的reduce任务
 	ReduceMux sync.Mutex
-	nReduce   int //设置有几个reduce任务，也就是map worker要输出的文件的哈希取模值
-	mapNum    int //当前还剩几个mapNum没有被finished
-	reduceNum int //当前还剩几个reduceNum没有有finished
+	NReduce   int //设置有几个reduce任务，也就是map worker要输出的文件的哈希取模值
+	MapNum    int //当前还剩几个mapNum没有被finished
+	ReduceNum int //当前还剩几个reduceNum没有有finished
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -57,7 +57,7 @@ func (c *Coordinator) startCounting(Tasktype int, key int) {
 			return
 		} else {
 			//没有完成 直接将该任务设置为没有发送状态
-			c.MapTasks[key].send = false //重新去
+			c.MapTasks[key].Send = false //重新去
 			return
 		}
 	} else {
@@ -70,7 +70,7 @@ func (c *Coordinator) startCounting(Tasktype int, key int) {
 			return
 		} else {
 			//没有完成 直接将该任务设置为没有发送状态
-			c.ReduceTasks[key].send = false //重新去
+			c.ReduceTasks[key].Send = false //重新去
 			return
 		}
 	}
@@ -84,42 +84,50 @@ func (c *Coordinator) TaskAsk(args *TaskAskRequest, reply *TaskAskResponse) erro
 	c.MapMux.Lock()
 	defer c.MapMux.Unlock()
 	for key, value := range c.MapTasks {
-		if value.send { //如果是 true  那么就是被分发了 就不管了
+
+		if value.Send { //如果是 true  那么就是被分发了 就不管了
 			continue
 		} else {
 			reply.Filename = value.FileName
 			reply.TaskType = 0
-			reply.nReduce = c.nReduce
-			reply.mapNum = key          //第几个map任务
-			c.MapTasks[key].send = true //表示当前任务已经发派
+			reply.NReduce = c.NReduce
+			reply.MapNum = key          //第几个map任务
+			c.MapTasks[key].Send = true //表示当前任务已经发派
+			// println("cor中 map任务发派出去了", reply.MapNum)
+			// println("cor中 map任务的名字", reply.Filename)
 			//分配任务后要开始计时等待
 			go c.startCounting(0, key)
 			// c.mapNum += 1
 			return nil
 		}
 	}
-	if c.mapNum > 0 {
+	if c.MapNum > 0 {
 		//如果所有任务都是send  但是没有全部是finished的 那么就发送wait的信息
-		reply.wait = true
+		reply.Wait = true
 		return nil
 	}
+	// println("开始分发reduce任务了")
 
 	//如果所有的map任务全部完成了 就可以分发reduce任务
+	c.ReduceMux.Lock()
+	defer c.ReduceMux.Unlock()
 	for key, value := range c.ReduceTasks {
-		if value.send {
+		if value.Send {
 			continue
 		} else {
+			// println("cor中 reduce任务", key)
 			reply.TaskType = 1
-			reply.reduceNum = key
-			c.ReduceTasks[key].send = true
+			reply.ReduceNum = key
+			c.ReduceTasks[key].Send = true
+			// println("cor中 reduece任务发派出去了", key)
 			go c.startCounting(1, key)
 			return nil
 		}
 	}
 
-	if c.reduceNum > 0 {
+	if c.ReduceNum > 0 {
 		//如果所有任务都是send  但是没有全部是finished的 那么就发送wait的信息
-		reply.wait = true
+		reply.Wait = true
 		return nil
 	}
 	// for c.reduceNum < c.nReduce {
@@ -137,16 +145,22 @@ func (c *Coordinator) TaskAsk(args *TaskAskRequest, reply *TaskAskResponse) erro
 func (c *Coordinator) OneMapFinish(args *MapFinishRequest, reply *MapFinishResponse) error {
 	c.MapMux.Lock()
 	defer c.MapMux.Unlock()
-	c.MapTasks[args.mapNum].Finish = true
-	c.mapNum = c.mapNum - 1
+	c.MapTasks[args.MapNum].Finish = true
+	// println(args.MapNum, "该map任务完成")
+	c.MapNum = c.MapNum - 1
+	// println("还剩下map任务", c.MapNum)
+
 	return nil
 }
 
-func (c *Coordinator) OneReduceFinish(args *MapFinishRequest, reply *MapFinishResponse) error {
+func (c *Coordinator) OneReduceFinish(args *ReduceFinishRequest, reply *ReduceFinishResponse) error {
 	c.ReduceMux.Lock()
 	defer c.ReduceMux.Unlock()
-	c.ReduceTasks[args.mapNum].Finish = true
-	c.reduceNum = c.reduceNum - 1
+	c.ReduceTasks[args.ReducepNum].Finish = true
+	// println(args.ReducepNum, "该reduce任务完成")
+	c.ReduceNum = c.ReduceNum - 1
+	// println("还剩下reduce任务", c.ReduceNum)
+
 	return nil
 }
 
@@ -168,7 +182,9 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
 	ret := false
-	if c.reduceNum == 0 {
+	c.ReduceMux.Lock()
+	defer c.ReduceMux.Unlock()
+	if c.ReduceNum == 0 { //这个地方是否需要锁？ 这个地方只读应该不需要锁吧
 		ret = true
 	}
 	// Your code here.
@@ -180,17 +196,20 @@ func (c *Coordinator) Done() bool {
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
+	// println("一共由", len(files), "个map任务")
 	c := Coordinator{
 		MapTasks: make(map[int]*MapTask),
 		// ReduceTask: make(map[string]bool),
 		ReduceTasks: make(map[int]*ReduceTask),
-		nReduce:     nReduce,
-		reduceNum:   nReduce,
+		NReduce:     nReduce,
+		ReduceNum:   nReduce,
 	}
 	//创建 nreduce个任务
-	for i := nReduce; i < nReduce; i++ {
-		c.ReduceTasks[i].send = false
-		c.ReduceTasks[i].Finish = false
+	for i := 0; i < nReduce; i++ {
+		thiReduceTask := new(ReduceTask)
+		thiReduceTask.Send = false
+		thiReduceTask.Finish = false
+		c.ReduceTasks[i] = thiReduceTask
 	}
 
 	//遍历文件 添加进map任务中
@@ -200,11 +219,11 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		// thisMapTask := MapTask{} //这是在栈上创建
 		thisMapTask.FileName = str
 		thisMapTask.Finish = false
-		thisMapTask.send = false
+		thisMapTask.Send = false
 		c.MapTasks[n] = thisMapTask
 		n = n + 1
 	}
-	c.mapNum = n //一共有几个map任务，即有几个文件
+	c.MapNum = n //一共有几个map任务，即有几个文件
 	// Your code here.
 
 	c.server()

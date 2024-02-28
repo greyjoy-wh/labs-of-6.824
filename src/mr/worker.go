@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -34,90 +35,30 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-// 处理Map任务
-func workMap(mapf func(string, string) []KeyValue, reply *TaskAskResponse) {
-	filename := reply.Filename
-	nReduce := reply.nReduce
-	mapNum := reply.mapNum
-	file, err := os.Open(filename)
-	if err != nil {
-		log.Fatalf("cannot open %v", filename)
-	}
-	content, err := ioutil.ReadAll(file)
-	if err != nil {
-		log.Fatalf("cannot read %v", filename)
-	}
-	file.Close()
-	kva := mapf(filename, string(content))
-	sort.Sort(ByKey(kva))
-	fileMap := make(map[int]*os.File)
-	for i := 0; i < nReduce; i++ {
-		file, _ := ioutil.TempFile("", "Temp")
-		fileMap[i] = file
-	}
-	for _, kv := range kva {
-		reduceNum := ihash(kv.Key) % nReduce
-		// interFileName := fmt.Sprintf("mr-%v-%v", mapNum, reduceNum)
-		// interFile, err := os.OpenFile(interFileName, os.O_WRONLY|os.O_CREATE, 0666)
-		// interFile, err := os.Create(interFileName)
-		// if err != nil {
-		// 	log.Fatalf("cannot open %v", interFileName)
-		// }
-		enc := json.NewEncoder(fileMap[reduceNum])
-		err1 := enc.Encode(&kv)
-		if err1 != nil {
-			log.Fatal(err1)
-		}
-	}
-
-	//当写入的临时文件全部写完后 将10个文件夹全部转化为该有的名字，原子命名
-
-	for num, file := range fileMap {
-		interFileName := fmt.Sprintf("mr-%v-%v", mapNum, num)
-		os.Rename(file.Name(), interFileName)
-	}
-
-	//rpc告诉coordinator map任务完成
-	req := &MapFinishRequest{}
-	// req.mapFileName = filename
-	req.mapNum = mapNum
-	newReply := &MapFinishResponse{}
-	call("Coordinator.OneMapFinish", req, newReply)
-	// oname := fmt.Sprint("mr-%v-0", filename) //map输出的中间文件
-	// ofile, _ := os.Create(oname)
-}
-
-// 处理Reduce任务
-func workReduce(reducef func(string, string) []KeyValue, reply *TaskAskResponse) {
-
-}
-
 // main/mrworker.go calls this function.
 //
 // 通过RPC判断要分配的任务是什么
-
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 	// Your worker implementation here.
 	//获得需要操作的文件 以及任务的类型 Map or reduce
-	args := &TaskAskRequest{}
-	reply := &TaskAskResponse{}
-	args.WorkID = 1 //暂定为1
-	for {           //循环获取任务
+
+	for { //循环获取任务
 		//远程调用TaskAsk，获取任务
-		call("Coordinator.TaskAsk", args, reply)
+		//每次rpc之前都要创建全新的这两个
+		args := TaskAskRequest{}
+		reply := TaskAskResponse{}
+		args.WorkID = 1 //暂定为1
+		// println("正在寻求任务")
+		call("Coordinator.TaskAsk", &args, &reply)
 		if reply.AllDone {
 			//所有任务都完成了 可以退休了 *****
 			return
 		}
 
-		//加载map  reduce方法
-		// mapf, reducef := loadPlugin(os.Args[1])
-		// intermediate := []KeyValue{}
-
-		//如果是wait 那么 就等待10s再去询问任务
-		if reply.wait {
-			time.Sleep(time.Second * 10)
+		//如果是wait 那么 就等待1s再去询问任务
+		if reply.Wait {
+			time.Sleep(time.Second * 1)
 			continue
 		}
 
@@ -126,8 +67,11 @@ func Worker(mapf func(string, string) []KeyValue,
 		if taskType == 0 {
 			//执行map任务
 			filename := reply.Filename
-			nReduce := reply.nReduce
-			mapNum := reply.mapNum
+			nReduce := reply.NReduce
+
+			mapNum := reply.MapNum
+			// println("已经接收到map任务 ", reply.MapNum)
+			// println("已经接收到任务map名字 ", filename)
 			file, err := os.Open(filename)
 			if err != nil {
 				log.Fatalf("cannot open %v", filename)
@@ -143,7 +87,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			// sort.Sort(ByKey(intermediate)) //按照key进行排序
 			//得到所有的的kv对 都在 kva数组里面，现在要将他们分别写入不同文件中
 
-			//创建10个临时文件夹
+			//创建10个临时文件
 			fileMap := make(map[int]*os.File)
 			for i := 0; i < nReduce; i++ {
 				file, _ := ioutil.TempFile("", "Temp")
@@ -171,18 +115,22 @@ func Worker(mapf func(string, string) []KeyValue,
 			}
 
 			//rpc告诉coordinator map任务完成
-			req := &MapFinishRequest{}
+			req := MapFinishRequest{}
 			// req.mapFileName = filename
-			req.mapNum = mapNum
-			reply := &MapFinishResponse{}
-			call("Coordinator.OneMapFinish", req, reply)
+			req.MapNum = mapNum
+			reply := MapFinishResponse{}
+			call("Coordinator.OneMapFinish", &req, &reply)
+			// println("wor中 map任务", req.MapNum, "已经完成")
 			// oname := fmt.Sprint("mr-%v-0", filename) //map输出的中间文件
 			// ofile, _ := os.Create(oname)
 
 		} else if taskType == 1 {
 			//执行reduce任务
+			var wg sync.WaitGroup
+			var mu sync.Mutex
 			kva := []KeyValue{} //所有的key和vaule值
-			reduceNum := reply.reduceNum
+			reduceNum := reply.ReduceNum
+			// println("已经接收到reduce任务 ", reply.ReduceNum)
 			//这时目标要写入的数据
 			oname := fmt.Sprintf("mr-out-%v", reduceNum)
 			ofile, _ := os.Create(oname)
@@ -193,7 +141,8 @@ func Worker(mapf func(string, string) []KeyValue,
 				fmt.Printf("Error matching pattern: %v\n", err)
 				return
 			}
-			for _, filename := range filenames {
+			/** 串行处理  不能通过reduce parallelism test
+				for _, filename := range filenames {
 				// 打开文件
 				file, err := os.Open(filename)
 				if err != nil {
@@ -211,7 +160,32 @@ func Worker(mapf func(string, string) []KeyValue,
 				}
 				// 处理打开的文件
 				// ...
+			}**/
+			//多协程进行解码
+			for _, filename := range filenames {
+				wg.Add(1)
+				go func(filename string) {
+					defer wg.Done()
+					file, err := os.Open(filename)
+					if err != nil {
+						fmt.Printf("Error opening file %s: %v\n", filename, err)
+						return
+					}
+					defer file.Close()
+					dec := json.NewDecoder(file)
+					for {
+						var kv KeyValue
+						if err := dec.Decode(&kv); err != nil {
+							break
+						}
+						mu.Lock()
+						kva = append(kva, kv)
+						mu.Unlock()
+					}
+				}(filename)
 			}
+			wg.Wait()
+
 			sort.Sort(ByKey(kva)) //按照key再次进行排序
 			intermediate := kva
 			i := 0
@@ -232,11 +206,11 @@ func Worker(mapf func(string, string) []KeyValue,
 				i = j
 			}
 			//告诉coordinator 我reduce完成了
-			req := &ReduceFinishRequest{}
+			req := ReduceFinishRequest{}
 			// req.mapFileName = filename
 			req.ReducepNum = reduceNum
-			reply := &ReduceFinishResponse{}
-			call("Coordinator.OneReduceFinish", req, reply)
+			reply := ReduceFinishResponse{}
+			call("Coordinator.OneReduceFinish", &req, &reply)
 		} else {
 			fmt.Println("task 类型没见过")
 		}
